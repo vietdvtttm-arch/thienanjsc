@@ -1,0 +1,502 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Bảng điều khiển Quản trị Doanh nghiệp</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  html,body,#root{height:100%}
+  body{margin:0;font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;background:#eef1f6}
+  .mono{font-variant-numeric:tabular-nums;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  input[type=number]::-webkit-inner-spin-button{opacity:.4}
+  #boot{display:flex;height:100%;align-items:center;justify-content:center;color:#64748b;font-size:14px}
+  .print-title{display:none}
+  @media print {
+    .no-print{display:none !important}
+    body,#root,main{background:#fff !important}
+    .print-title{display:block !important}
+    .avoid-break{break-inside:avoid;page-break-inside:avoid}
+    *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+    @page{margin:12mm}
+  }
+</style>
+</head>
+<body>
+<div id="root"><div id="boot">Đang khởi tạo bảng điều khiển…</div></div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useMemo, useRef } = React;
+const clone=o=>JSON.parse(JSON.stringify(o));
+function downloadBlob(content,filename,type){const b=new Blob([content],{type});const u=URL.createObjectURL(b);const a=document.createElement("a");a.href=u;a.download=filename;a.click();setTimeout(()=>URL.revokeObjectURL(u),1000);}
+
+/* ===== tokens ===== */
+const C = { navy:"#14233f", navy2:"#1F3864", teal:"#1F7A6F", ink:"#1f2937", sub:"#64748b",
+  line:"#e2e8f0", page:"#eef1f6" };
+const STA = {
+  "XANH": { c:"#15803d", bg:"#dcfce7", ln:"#86efac", dot:"#22c55e" },
+  "VÀNG": { c:"#b45309", bg:"#fef3c7", ln:"#fcd34d", dot:"#f59e0b" },
+  "ĐỎ":   { c:"#b91c1c", bg:"#fee2e2", ln:"#fca5a5", dot:"#ef4444" },
+};
+
+/* ===== logic ===== */
+const statusOf=(v,g,b,d)=>!isFinite(v)?"ĐỎ":d==="high"?(v>=g?"XANH":v<=b?"ĐỎ":"VÀNG"):(v<=g?"XANH":v>=b?"ĐỎ":"VÀNG");
+const scoreOf=(v,g,b,d)=>{ if(!isFinite(v))return 0; let s=d==="high"?(v-b)/(g-b)*100:(b-v)/(b-g)*100; return Math.max(0,Math.min(100,s)); };
+const fmtVal=(v,f)=>{ if(!isFinite(v))return"—"; if(f==="pct")return v.toFixed(1)+"%"; if(f==="x")return v.toFixed(2)+"×"; if(f==="int")return Math.round(v).toLocaleString("vi-VN"); return v.toFixed(1); };
+const fmtN=(v)=>isFinite(v)?Math.round(v).toLocaleString("vi-VN"):"—";
+const rollup=(arr)=>arr.includes("ĐỎ")?"ĐỎ":arr.includes("VÀNG")?"VÀNG":"XANH";
+function computeKpis(node, vals){ const ext={...vals}; if(node.derive)Object.assign(ext,node.derive(ext));
+  return node.kpis.map(k=>{ let v=k.calc(ext); if(!isFinite(v))v=0;
+    return {...k, val:v, status:statusOf(v,k.good,k.bad,k.dir), score:scoreOf(v,k.good,k.bad,k.dir)}; }); }
+
+/* ===== data: 13 phòng ban ===== */
+const DEPTS = [
+ {code:"HCNS",name:"Hành chính – Nhân sự",short:"HC–NS",
+  inputs:[["ns_dau","Nhân sự đầu kỳ","người",320],["ns_tuyen","Tuyển mới","người",12],["ns_nghi","Nghỉ việc","người",4],["vt_kh","Vị trí cần tuyển","vị trí",15],["vt_dat","Vị trí tuyển đạt","vị trí",12],["luong_tt","Quỹ lương thực tế","triệu",9800],["luong_kh","Quỹ lương kế hoạch","triệu",9500],["dt_ky","Doanh thu kỳ","triệu",85000],["kpi_dat","Nhân sự đạt KPI","người",290]],
+  derive:v=>({ns_cuoi:v.ns_dau+v.ns_tuyen-v.ns_nghi}),
+  kpis:[{label:"Tỷ lệ nghỉ việc",unit:"%",fmt:"pct",good:1.7,bad:2.5,dir:"low",calc:v=>v.ns_nghi/((v.ns_dau+v.ns_cuoi)/2)*100},
+   {label:"% vị trí tuyển đạt KH",unit:"%",fmt:"pct",good:90,bad:70,dir:"high",calc:v=>v.vt_dat/v.vt_kh*100},
+   {label:"Quỹ lương TT / KH",unit:"%",fmt:"pct",good:100,bad:110,dir:"low",calc:v=>v.luong_tt/v.luong_kh*100},
+   {label:"Chi phí NS / Doanh thu",unit:"%",fmt:"pct",good:12,bad:18,dir:"low",calc:v=>v.luong_tt/v.dt_ky*100},
+   {label:"% nhân sự đạt KPI",unit:"%",fmt:"pct",good:85,bad:70,dir:"high",calc:v=>v.kpi_dat/v.ns_cuoi*100}]},
+ {code:"DATDAI",name:"Quản lý Đất đai",short:"Đất đai",
+  inputs:[["dt_tong","Tổng quỹ đất","ha",250],["dt_sach","Đất sạch","ha",180],["gpmb_kh","% GPMB kế hoạch","%",80],["gpmb_tt","% GPMB thực tế","%",68],["hs_can","Hồ sơ PL cần làm","hs",20],["hs_xong","Hồ sơ PL đã xong","hs",14],["tien_phai","Tiền SDĐ phải nộp","triệu",120000],["tien_da","Tiền SDĐ đã nộp","triệu",90000]],
+  kpis:[{label:"% đất sạch / quỹ đất",unit:"%",fmt:"pct",good:70,bad:50,dir:"high",calc:v=>v.dt_sach/v.dt_tong*100},
+   {label:"Chênh lệch GPMB (TT−KH)",unit:"đ%",fmt:"num",good:0,bad:-15,dir:"high",calc:v=>v.gpmb_tt-v.gpmb_kh},
+   {label:"% hồ sơ pháp lý xong",unit:"%",fmt:"pct",good:90,bad:70,dir:"high",calc:v=>v.hs_xong/v.hs_can*100},
+   {label:"% nộp nghĩa vụ TC đất",unit:"%",fmt:"pct",good:95,bad:70,dir:"high",calc:v=>v.tien_da/v.tien_phai*100}]},
+ {code:"DTPT",name:"Đầu tư – Phát triển dự án",short:"Đầu tư",
+  inputs:[["co_xet","Cơ hội thẩm định","ch",5],["co_to_da","Chuyển thành dự án","da",2],["mc_xong","Mốc PT hoàn thành","mốc",7],["mc_tong","Tổng mốc PT","mốc",10],["npv","NPV dự án","tỷ",280],["irr","IRR","%",14.5],["wacc","WACC kỳ vọng","%",12]],
+  kpis:[{label:"Tỷ lệ chuyển đổi cơ hội",unit:"%",fmt:"pct",good:40,bad:20,dir:"high",calc:v=>v.co_to_da/v.co_xet*100},
+   {label:"Chênh lệch IRR − WACC",unit:"đ%",fmt:"num",good:2,bad:0,dir:"high",calc:v=>v.irr-v.wacc},
+   {label:"NPV (biên an toàn)",unit:"tỷ",fmt:"int",good:50,bad:0,dir:"high",calc:v=>v.npv},
+   {label:"% hoàn thành mốc PT",unit:"%",fmt:"pct",good:90,bad:70,dir:"high",calc:v=>v.mc_xong/v.mc_tong*100}]},
+ {code:"TKE",name:"Quản lý Thiết kế",short:"Thiết kế",
+  inputs:[["hs_kh","Hồ sơ TK kế hoạch","hs",10],["hs_xong","Hồ sơ TK hoàn thành","hs",8],["hs_nop","Hồ sơ nộp duyệt","hs",8],["hs_duyet","Duyệt đúng hạn","hs",6],["cp_thaydoi","CP thay đổi TK","tỷ",6],["gt_goi","Giá trị gói TK","tỷ",320],["tk_kiem","Tiết kiệm VE","tỷ",9]],
+  kpis:[{label:"% hồ sơ TK hoàn thành",unit:"%",fmt:"pct",good:95,bad:80,dir:"high",calc:v=>v.hs_xong/v.hs_kh*100},
+   {label:"% hồ sơ duyệt đúng hạn",unit:"%",fmt:"pct",good:90,bad:75,dir:"high",calc:v=>v.hs_duyet/v.hs_nop*100},
+   {label:"CP thay đổi / giá trị gói",unit:"%",fmt:"pct",good:2,bad:3,dir:"low",calc:v=>v.cp_thaydoi/v.gt_goi*100},
+   {label:"Tỷ lệ tiết kiệm VE",unit:"%",fmt:"pct",good:3,bad:1,dir:"high",calc:v=>v.tk_kiem/v.gt_goi*100}]},
+ {code:"KHKT",name:"Kế hoạch Kỹ thuật",short:"KH–KT",
+  inputs:[["td_kh","% tiến độ KH","%",50],["td_tt","% tiến độ thực tế","%",46],["dutoan","Giá trị dự toán","tỷ",1200],["thucte","Giá trị thực tế","tỷ",1290],["ps_kl","Khối lượng phát sinh","tỷ",110],["gt_hd","Giá trị hợp đồng","tỷ",1200]],
+  kpis:[{label:"Chênh lệch tiến độ (TT−KH)",unit:"đ%",fmt:"num",good:0,bad:-10,dir:"high",calc:v=>v.td_tt-v.td_kh},
+   {label:"Sai lệch dự toán",unit:"%",fmt:"pct",good:5,bad:10,dir:"low",calc:v=>(v.thucte-v.dutoan)/v.dutoan*100},
+   {label:"% khối lượng phát sinh",unit:"%",fmt:"pct",good:5,bad:10,dir:"low",calc:v=>v.ps_kl/v.gt_hd*100}]},
+ {code:"THCO",name:"Quản lý Thi công",short:"Thi công",
+  inputs:[["ev","EV – Giá trị thực hiện","tỷ",92],["pv","PV – Giá trị kế hoạch","tỷ",100],["ac","AC – Chi phí thực tế","tỷ",95],["nt_dat","Nghiệm thu đạt L1","hm",27],["nt_tong","Tổng nghiệm thu","hm",30],["nl_hd","Nhân lực huy động","người",210],["nl_cau","Nhân lực nhu cầu","người",250]],
+  kpis:[{label:"SPI – hiệu quả tiến độ",unit:"×",fmt:"x",good:1,bad:0.8,dir:"high",calc:v=>v.ev/v.pv},
+   {label:"CPI – hiệu quả chi phí",unit:"×",fmt:"x",good:1,bad:0.95,dir:"high",calc:v=>v.ev/v.ac},
+   {label:"% nghiệm thu đạt lần 1",unit:"%",fmt:"pct",good:95,bad:90,dir:"high",calc:v=>v.nt_dat/v.nt_tong*100},
+   {label:"% huy động nhân lực",unit:"%",fmt:"pct",good:95,bad:85,dir:"high",calc:v=>v.nl_hd/v.nl_cau*100}]},
+ {code:"TCHI",name:"Tài chính",short:"Tài chính",
+  inputs:[["thu","Tổng thu kỳ","triệu",120000],["chi","Tổng chi kỳ","triệu",118000],["no_vay","Tổng nợ vay","triệu",980000],["vcsh","Vốn chủ sở hữu","triệu",520000],["ebitda","EBITDA 12T","triệu",260000],["phai_thu","Phải thu KH","triệu",210000],["no_qh","Nợ quá hạn","triệu",16000],["dt_nam","Doanh thu 12T","triệu",1500000]],
+  kpis:[{label:"Dòng tiền thuần kỳ",unit:"triệu",fmt:"int",good:5000,bad:0,dir:"high",calc:v=>v.thu-v.chi},
+   {label:"Nợ vay / Vốn chủ (D/E)",unit:"×",fmt:"x",good:1.5,bad:2,dir:"low",calc:v=>v.no_vay/v.vcsh},
+   {label:"Nợ vay / EBITDA",unit:"×",fmt:"x",good:3,bad:4,dir:"low",calc:v=>v.no_vay/v.ebitda},
+   {label:"Số ngày phải thu (DSO)",unit:"ngày",fmt:"num",good:60,bad:90,dir:"low",calc:v=>v.phai_thu/v.dt_nam*365},
+   {label:"% nợ quá hạn",unit:"%",fmt:"pct",good:5,bad:10,dir:"low",calc:v=>v.no_qh/v.phai_thu*100}]},
+ {code:"KTOA",name:"Kế toán",short:"Kế toán",
+  inputs:[["dt","Doanh thu kỳ","triệu",120000],["gv","Giá vốn","triệu",102000],["cp_bh_ql","CP bán hàng+QLDN","triệu",9000],["thue","Thuế TNDN","triệu",1800],["vcsh","Vốn chủ sở hữu","triệu",520000],["ns_chi_kh","Ngân sách chi phí","triệu",8800],["ns_chi_tt","Chi phí thực tế","triệu",9000]],
+  derive:v=>{const lg=v.dt-v.gv;const lt=lg-v.cp_bh_ql;return{ln_gop:lg,ln_st:lt-v.thue};},
+  kpis:[{label:"Biên lợi nhuận gộp",unit:"%",fmt:"pct",good:15,bad:10,dir:"high",calc:v=>v.ln_gop/v.dt*100},
+   {label:"Biên lợi nhuận ròng",unit:"%",fmt:"pct",good:8,bad:4,dir:"high",calc:v=>v.ln_st/v.dt*100},
+   {label:"ROE (quy đổi năm)",unit:"%",fmt:"pct",good:15,bad:8,dir:"high",calc:v=>v.ln_st*12/v.vcsh*100},
+   {label:"Vượt ngân sách chi phí",unit:"%",fmt:"pct",good:5,bad:10,dir:"low",calc:v=>(v.ns_chi_tt-v.ns_chi_kh)/v.ns_chi_kh*100}]},
+ {code:"PCHE",name:"Pháp chế",short:"Pháp chế",
+  inputs:[["hd_ruiro","HĐ rủi ro cao chưa xử lý","HĐ",3],["tc_gt","Giá trị tranh chấp","tỷ",18],["vcsh","Vốn chủ sở hữu","tỷ",520],["tt_vande","Vấn đề tuân thủ","vđ",1],["rr_chua","Rủi ro PL nghiêm trọng","rr",1]],
+  kpis:[{label:"Giá trị tranh chấp / VCSH",unit:"%",fmt:"pct",good:2,bad:5,dir:"low",calc:v=>v.tc_gt/v.vcsh*100},
+   {label:"HĐ rủi ro cao chưa xử lý",unit:"HĐ",fmt:"int",good:0,bad:2,dir:"low",calc:v=>v.hd_ruiro},
+   {label:"Rủi ro PL nghiêm trọng",unit:"rr",fmt:"int",good:0,bad:1,dir:"low",calc:v=>v.rr_chua},
+   {label:"Vấn đề tuân thủ phát hiện",unit:"vđ",fmt:"int",good:0,bad:2,dir:"low",calc:v=>v.tt_vande}]},
+ {code:"KDOA",name:"Kinh doanh",short:"Kinh doanh",
+  inputs:[["ds_luyke","Doanh số lũy kế","tỷ",820],["kh_luyke","KH doanh số lũy kế","tỷ",1000],["sp_moban","SP mở bán","sp",200],["sp_daban","SP đã bán","sp",96],["lead","Lead","lead",450],["chot","Giao dịch chốt","gd",38],["pt_tiendo","Phải thu theo tiến độ","tỷ",240],["da_thu","Đã thu","tỷ",205]],
+  kpis:[{label:"% hoàn thành KH doanh số",unit:"%",fmt:"pct",good:100,bad:85,dir:"high",calc:v=>v.ds_luyke/v.kh_luyke*100},
+   {label:"Tỷ lệ hấp thụ",unit:"%",fmt:"pct",good:70,bad:50,dir:"high",calc:v=>v.sp_daban/v.sp_moban*100},
+   {label:"Tỷ lệ chốt (lead→deal)",unit:"%",fmt:"pct",good:10,bad:5,dir:"high",calc:v=>v.chot/v.lead*100},
+   {label:"% thu theo tiến độ",unit:"%",fmt:"pct",good:95,bad:85,dir:"high",calc:v=>v.da_thu/v.pt_tiendo*100}]},
+ {code:"MKTG",name:"Marketing",short:"Marketing",
+  inputs:[["lead","Lead tạo ra","lead",450],["lead_cl","Lead chất lượng","lead",270],["ln_mkt","Giá trị quy đổi MKT","triệu",2400],["cp_mkt","Chi phí MKT","triệu",850],["ns_mkt","Ngân sách MKT","triệu",800]],
+  kpis:[{label:"Chi phí / lead (CPL)",unit:"triệu",fmt:"x",good:1.8,bad:2.5,dir:"low",calc:v=>v.cp_mkt/v.lead},
+   {label:"ROI Marketing",unit:"×",fmt:"x",good:3,bad:1,dir:"high",calc:v=>(v.ln_mkt-v.cp_mkt)/v.cp_mkt},
+   {label:"% lead chất lượng",unit:"%",fmt:"pct",good:60,bad:40,dir:"high",calc:v=>v.lead_cl/v.lead*100},
+   {label:"Vượt ngân sách MKT",unit:"%",fmt:"pct",good:5,bad:10,dir:"low",calc:v=>(v.cp_mkt-v.ns_mkt)/v.ns_mkt*100}]},
+ {code:"VTU",name:"Vật tư",short:"Vật tư",
+  inputs:[["ms_ky","Giá trị mua sắm","tỷ",95],["ms_dutoan","Dự toán mua sắm","tỷ",100],["gv","Giá vốn xuất dùng","tỷ",90],["tk_bq","Tồn kho bình quân","tỷ",55],["don_dunghan","Đơn giao đúng hạn","đơn",88],["don_tong","Tổng đơn","đơn",100],["gia_vt","Chỉ số giá VT","đ",112]],
+  kpis:[{label:"Tỷ lệ tiết kiệm mua sắm",unit:"%",fmt:"pct",good:2,bad:-5,dir:"high",calc:v=>(v.ms_dutoan-v.ms_ky)/v.ms_dutoan*100},
+   {label:"Vòng quay tồn kho",unit:"×",fmt:"x",good:1.5,bad:0.8,dir:"high",calc:v=>v.gv/v.tk_bq},
+   {label:"% giao hàng đúng hạn",unit:"%",fmt:"pct",good:95,bad:90,dir:"high",calc:v=>v.don_dunghan/v.don_tong*100},
+   {label:"Biến động giá VT chủ chốt",unit:"%",fmt:"num",good:5,bad:10,dir:"low",calc:v=>v.gia_vt-100}]},
+ {code:"ATAT",name:"An ninh – An toàn",short:"An toàn",
+  inputs:[["tnld","TNLĐ trong kỳ","vụ",0],["gio_cong","Tổng giờ công","giờ",480000],["ngay_at","Ngày an toàn liên tục","ngày",145],["sc_so","Số sự cố","sc",3],["sc_dunghan","Khắc phục đúng hạn","sc",2],["an_ninh","Mất an ninh","vụ",0],["moi_truong","Vi phạm môi trường","vụ",0]],
+  kpis:[{label:"LTIFR (tần suất TNLĐ)",unit:"",fmt:"x",good:0,bad:1,dir:"low",calc:v=>v.tnld*1000000/v.gio_cong},
+   {label:"Số ngày an toàn liên tục",unit:"ngày",fmt:"int",good:90,bad:30,dir:"high",calc:v=>v.ngay_at},
+   {label:"% khắc phục sự cố đúng hạn",unit:"%",fmt:"pct",good:95,bad:85,dir:"high",calc:v=>v.sc_dunghan/v.sc_so*100},
+   {label:"Vi phạm an ninh + môi trường",unit:"vụ",fmt:"int",good:0,bad:1,dir:"low",calc:v=>v.an_ninh+v.moi_truong}]},
+];
+
+/* ===== data: dự án (EVM) ===== */
+const PRJ_INPUTS=[
+ ["g1","TIẾN ĐỘ",[["td_kh","% tiến độ KH","%"],["td_tt","% tiến độ thực tế","%"],["mc_xong","Mốc hoàn thành","mốc"],["mc_tong","Tổng mốc","mốc"]]],
+ ["g2","CHI PHÍ – EVM",[["bac","BAC – Tổng ngân sách","tỷ"],["pv","PV – Kế hoạch đến kỳ","tỷ"],["ev","EV – Thực hiện","tỷ"],["ac","AC – Chi phí thực tế","tỷ"]]],
+ ["g3","CHẤT LƯỢNG",[["nt_dat","Nghiệm thu đạt L1","hm"],["nt_tong","Tổng nghiệm thu","hm"],["ncr","Lỗi/NCR mở","lỗi"]]],
+ ["g4","AN TOÀN (HSE)",[["tnld","TNLĐ kỳ","vụ"],["gio_cong","Giờ công","giờ"],["ngay_at","Ngày an toàn","ngày"]]],
+ ["g5","DÒNG TIỀN",[["nt_luyke","Nghiệm thu lũy kế","tỷ"],["da_thu","Đã thu","tỷ"]]],
+];
+const PRJ_DERIVE=v=>{const eac=v.bac*v.ac/v.ev;return{sv:v.ev-v.pv,cv:v.ev-v.ac,eac,vac:v.bac-eac,etc:eac-v.ac};};
+const PRJ_KPIS=[
+ {label:"% tiến độ TT / KH",unit:"%",fmt:"pct",good:100,bad:90,dir:"high",calc:v=>v.td_tt/v.td_kh*100},
+ {label:"SPI – hiệu quả tiến độ",unit:"×",fmt:"x",good:1,bad:0.9,dir:"high",calc:v=>v.ev/v.pv},
+ {label:"CPI – hiệu quả chi phí",unit:"×",fmt:"x",good:1,bad:0.95,dir:"high",calc:v=>v.ev/v.ac},
+ {label:"Chênh lệch tiến độ (SV%)",unit:"%",fmt:"num",good:0,bad:-10,dir:"high",calc:v=>(v.ev-v.pv)/v.pv*100},
+ {label:"Dự báo ngân sách (VAC%)",unit:"%",fmt:"num",good:0,bad:-5,dir:"high",calc:v=>(v.bac-v.bac*v.ac/v.ev)/v.bac*100},
+ {label:"% nghiệm thu đạt L1",unit:"%",fmt:"pct",good:95,bad:90,dir:"high",calc:v=>v.nt_dat/v.nt_tong*100},
+ {label:"Số lỗi/NCR mở",unit:"lỗi",fmt:"int",good:0,bad:5,dir:"low",calc:v=>v.ncr},
+ {label:"LTIFR",unit:"",fmt:"x",good:0,bad:1,dir:"low",calc:v=>v.tnld*1000000/v.gio_cong},
+ {label:"Ngày an toàn liên tục",unit:"ngày",fmt:"int",good:90,bad:30,dir:"high",calc:v=>v.ngay_at},
+ {label:"% thu theo nghiệm thu",unit:"%",fmt:"pct",good:90,bad:75,dir:"high",calc:v=>v.da_thu/v.nt_luyke*100},
+];
+const PROJECTS=[
+ {code:"DA1",name:"NOXH Quang Châu",role:"Chủ đầu tư",vals:{td_kh:62,td_tt:59,mc_xong:8,mc_tong:12,bac:1000,pv:620,ev:590,ac:610,nt_dat:24,nt_tong:28,ncr:4,tnld:0,gio_cong:320000,ngay_at:120,nt_luyke:590,da_thu:520}},
+ {code:"DA2",name:"Cụm công nghiệp Yên Lư",role:"CĐT kiêm Tổng thầu",vals:{td_kh:45,td_tt:40,mc_xong:5,mc_tong:11,bac:1500,pv:680,ev:600,ac:650,nt_dat:18,nt_tong:22,ncr:7,tnld:1,gio_cong:410000,ngay_at:12,nt_luyke:600,da_thu:470}},
+ {code:"DA3",name:"DA TM&NO HH4",role:"Nhà thầu thi công",vals:{td_kh:70,td_tt:72,mc_xong:9,mc_tong:12,bac:600,pv:420,ev:430,ac:425,nt_dat:29,nt_tong:30,ncr:1,tnld:0,gio_cong:260000,ngay_at:210,nt_luyke:430,da_thu:410}},
+ {code:"DA4",name:"Khu đô thị Lạc phú 3",role:"Chủ đầu tư",vals:{td_kh:55,td_tt:53,mc_xong:6,mc_tong:10,bac:1200,pv:560,ev:545,ac:550,nt_dat:27,nt_tong:29,ncr:3,tnld:0,gio_cong:300000,ngay_at:95,nt_luyke:545,da_thu:500}},
+];
+
+/* ===== icons (inline svg) ===== */
+const Icon=({d,size=16})=>(<svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{d}</svg>);
+const IcGrid=<Icon d={<><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></>}/>;
+const IcBuild=<Icon d={<><rect x="4" y="2" width="16" height="20" rx="1"/><path d="M9 22v-4h6v4M8 6h.01M12 6h.01M16 6h.01M8 10h.01M12 10h.01M16 10h.01"/></>}/>;
+const IcFolder=<Icon d={<><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></>}/>;
+const IcReset=<Icon d={<><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></>}/>;
+const IcChev=<Icon size={16} d={<path d="M9 18l6-6-6-6"/>}/>;
+const IcSave=<Icon d={<><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5M12 15V3"/></>}/>;
+const IcOpen=<Icon d={<><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5M12 3v12"/></>}/>;
+const IcXlsx=<Icon d={<><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 3v18M15 3v18"/></>}/>;
+const IcPdf=<Icon d={<><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/></>}/>;
+
+/* ===== small UI ===== */
+function TBtn({onClick,icon,children,danger}){return(
+ <button onClick={onClick} style={{borderColor:danger?"#fca5a5":C.line,color:danger?"#b91c1c":C.ink}}
+   className="inline-flex items-center gap-1.5 text-xs font-semibold rounded-md border bg-white px-2.5 py-1.5 hover:bg-slate-50 transition">{icon}{children}</button>);}
+function Badge({s,small}){const t=STA[s];return(
+ <span style={{background:t.bg,color:t.c,borderColor:t.ln}} className={"inline-flex items-center gap-1 rounded-full border font-semibold "+(small?"px-2 py-0.5 text-[10px]":"px-2.5 py-1 text-xs")}>
+   <span style={{background:t.dot}} className="w-1.5 h-1.5 rounded-full"></span>{s}</span>);}
+function Eyebrow({children}){return <div className="text-[11px] font-bold tracking-widest uppercase" style={{color:C.sub}}>{children}</div>;}
+function NumberInput({label,unit,value,onChange}){return(
+ <label className="flex items-center justify-between gap-2 py-1.5">
+  <span className="text-[13px] leading-tight" style={{color:C.ink}}>{label}</span>
+  <span className="flex items-center gap-1 shrink-0">
+   <input type="number" value={value} onChange={e=>onChange(e.target.value===""?0:parseFloat(e.target.value))}
+     style={{borderColor:C.line}} className="mono w-24 text-right text-[13px] font-semibold rounded-md border bg-white px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-200"/>
+   <span className="text-[11px] w-10" style={{color:C.sub}}>{unit}</span>
+  </span></label>);}
+
+function KpiCard({r}){const t=STA[r.status];return(
+ <div className="bg-white rounded-xl border p-3.5" style={{borderColor:C.line}}>
+  <div className="flex items-start justify-between gap-2">
+   <span className="text-[13px] font-medium leading-tight" style={{color:C.ink}}>{r.label}</span><Badge s={r.status} small/></div>
+  <div className="flex items-end justify-between mt-2">
+   <div className="mono text-2xl font-extrabold" style={{color:t.c}}>{fmtVal(r.val,r.fmt)}</div>
+   <div className="text-[10px] text-right leading-tight" style={{color:C.sub}}><div>🟢 {fmtVal(r.good,r.fmt)}</div><div>🔴 {fmtVal(r.bad,r.fmt)}</div></div></div>
+  <div className="mt-2 h-1.5 rounded-full overflow-hidden" style={{background:"#eef2f7"}}>
+   <div style={{width:r.score+"%",background:t.dot}} className="h-full transition-all"></div></div></div>);}
+
+/* ===== charts (svg) ===== */
+function Donut({g,y,r}){
+ const tot=g+y+r||1; const segs=[["XANH",g],["VÀNG",y],["ĐỎ",r]];
+ const R=70, CX=90, CY=90; let off=0;
+ return(<svg viewBox="0 0 180 180" className="w-full" style={{maxHeight:230}}>
+  <g transform="rotate(-90 90 90)">
+   {segs.map(([k,val],i)=>{const pct=val/tot*100; const el=(
+     <circle key={i} cx={CX} cy={CY} r={R} fill="none" stroke={STA[k].dot} strokeWidth="22"
+       pathLength="100" strokeDasharray={pct+" "+(100-pct)} strokeDashoffset={-off}/>);
+     off+=pct; return el;})}
+  </g>
+  <text x="90" y="84" textAnchor="middle" className="mono" style={{fontSize:30,fontWeight:800,fill:C.navy}}>{tot}</text>
+  <text x="90" y="104" textAnchor="middle" style={{fontSize:11,fill:C.sub}}>KPI giám sát</text>
+ </svg>);}
+
+function DeptBars({rows}){ // stacked horizontal: red/amber/green per dept
+ return(<div className="space-y-1.5">
+  {rows.map(d=>{const tot=d.total||1;const seg=(n,col)=> n>0?<div style={{width:(n/tot*100)+"%",background:col}} className="h-full"></div>:null;
+   return(<div key={d.code} className="flex items-center gap-2">
+    <div className="w-20 text-[11px] truncate" style={{color:C.ink}} title={d.name}>{d.short}</div>
+    <div className="flex-1 h-4 rounded overflow-hidden flex" style={{background:"#f1f5f9"}}>
+      {seg(d.cD,STA["ĐỎ"].dot)}{seg(d.cY,STA["VÀNG"].dot)}{seg(d.cG,STA["XANH"].dot)}</div>
+    <div className="mono text-[11px] w-16 text-right" style={{color:C.sub}}>
+      <b style={{color:STA["ĐỎ"].c}}>{d.cD}</b>·<b style={{color:STA["VÀNG"].c}}>{d.cY}</b>·<b style={{color:STA["XANH"].c}}>{d.cG}</b></div>
+   </div>);})}
+ </div>);}
+
+function ScoreBars({results}){
+ return(<div className="space-y-2">
+  {results.map((r,i)=>{const t=STA[r.status];return(
+   <div key={i} className="flex items-center gap-2">
+    <div className="w-40 text-[11px] leading-tight" style={{color:C.ink}}>{r.label}</div>
+    <div className="flex-1 h-3.5 rounded-full overflow-hidden" style={{background:"#eef2f7"}}>
+      <div style={{width:r.score+"%",background:t.dot}} className="h-full transition-all"></div></div>
+    <div className="mono text-[11px] w-9 text-right" style={{color:C.sub}}>{Math.round(r.score)}</div>
+   </div>);})}
+ </div>);}
+
+function EvmChart({pv,ev,ac,eac,bac}){
+ const W=360,H=190,pad=30,base=H-24,top=12;
+ const max=Math.max(pv,ev,ac,eac,bac,1)*1.12;
+ const bars=[["PV",pv,"#94a3b8"],["EV",ev,C.teal],["AC",ac,C.navy2],["EAC",eac,STA["VÀNG"].dot]];
+ const bw=46, gap=(W-pad*2-bw*bars.length)/(bars.length-1);
+ const yOf=v=>top+(1-v/max)*(base-top);
+ const bacY=yOf(bac);
+ return(<svg viewBox={"0 0 "+W+" "+H} className="w-full" style={{maxHeight:230}}>
+  {[0,0.25,0.5,0.75,1].map((f,i)=>{const yy=top+(1-f)*(base-top);return(
+    <g key={i}><line x1={pad} y1={yy} x2={W-pad} y2={yy} stroke="#eef2f7"/>
+    <text x={pad-4} y={yy+3} textAnchor="end" style={{fontSize:8,fill:C.sub}}>{Math.round(max*f)}</text></g>);})}
+  {bars.map(([name,val,col],i)=>{const x=pad+i*(bw+gap);const yy=yOf(val);return(
+    <g key={i}>
+     <rect x={x} y={yy} width={bw} height={base-yy} rx="3" fill={col}/>
+     <text x={x+bw/2} y={yy-4} textAnchor="middle" className="mono" style={{fontSize:10,fontWeight:700,fill:C.ink}}>{fmtN(val)}</text>
+     <text x={x+bw/2} y={base+13} textAnchor="middle" style={{fontSize:11,fontWeight:600,fill:C.ink}}>{name}</text>
+    </g>);})}
+  <line x1={pad} y1={bacY} x2={W-pad} y2={bacY} stroke={STA["ĐỎ"].c} strokeWidth="1.5" strokeDasharray="5 4"/>
+  <text x={W-pad} y={bacY-4} textAnchor="end" style={{fontSize:9,fontWeight:700,fill:STA["ĐỎ"].c}}>BAC {fmtN(bac)}</text>
+ </svg>);}
+
+/* ===== views ===== */
+function Overview({agg,go}){
+ return(<div className="space-y-5">
+  <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+   {[["Tổng KPI giám sát",agg.total,C.navy2],["An toàn (Xanh)",agg.g,STA["XANH"].c],["Cảnh báo (Vàng)",agg.y,STA["VÀNG"].c],["Nguy hiểm (Đỏ)",agg.r,STA["ĐỎ"].c]].map((c,i)=>(
+    <div key={i} className="bg-white rounded-xl border p-4" style={{borderColor:C.line}}>
+     <Eyebrow>{c[0]}</Eyebrow><div className="mono text-3xl font-extrabold mt-2" style={{color:c[2]}}>{c[1]}</div></div>))}
+  </div>
+  <div className="grid lg:grid-cols-5 gap-4">
+   <div className="bg-white rounded-xl border p-4 lg:col-span-2" style={{borderColor:C.line}}>
+    <Eyebrow>Phân bố trạng thái KPI</Eyebrow>
+    <Donut g={agg.g} y={agg.y} r={agg.r}/>
+    <div className="flex justify-center gap-4 text-xs mt-1">
+     {[["Xanh",agg.g,STA["XANH"].dot],["Vàng",agg.y,STA["VÀNG"].dot],["Đỏ",agg.r,STA["ĐỎ"].dot]].map((e,i)=>(
+      <span key={i} className="inline-flex items-center gap-1.5"><span style={{background:e[2]}} className="w-2.5 h-2.5 rounded-full"></span>{e[0]} · <b className="mono">{e[1]}</b></span>))}
+    </div></div>
+   <div className="bg-white rounded-xl border p-4 lg:col-span-3" style={{borderColor:C.line}}>
+    <Eyebrow>Bản đồ cảnh báo theo phòng ban</Eyebrow>
+    <div className="mt-3"><DeptBars rows={agg.perDept}/></div></div>
+  </div>
+  <div className="bg-white rounded-xl border" style={{borderColor:C.line}}>
+   <div className="px-4 py-3 border-b" style={{borderColor:C.line}}><Eyebrow>Sức khỏe từng phòng ban — bấm để xem & chỉnh số liệu</Eyebrow></div>
+   <div className="grid sm:grid-cols-2 lg:grid-cols-3">
+    {agg.perDept.map(d=>{const t=STA[d.overall];return(
+     <button key={d.code} onClick={()=>go(d.code)} className="text-left p-4 border-b border-r hover:bg-slate-50 transition group" style={{borderColor:C.line}}>
+      <div className="flex items-center justify-between"><span className="font-semibold text-sm" style={{color:C.ink}}>{d.name}</span>
+       <span style={{color:C.sub}} className="group-hover:translate-x-0.5 transition inline-block">{IcChev}</span></div>
+      <div className="flex items-center justify-between mt-2"><Badge s={d.overall} small/>
+       <span className="text-[11px] mono" style={{color:C.sub}}><b style={{color:STA["ĐỎ"].c}}>{d.cD}</b> · <b style={{color:STA["VÀNG"].c}}>{d.cY}</b> · <b style={{color:STA["XANH"].c}}>{d.cG}</b></span></div>
+      <div className="mt-2 h-1.5 rounded-full overflow-hidden" style={{background:"#eef2f7"}}><div style={{width:d.score+"%",background:t.dot}} className="h-full transition-all"></div></div>
+     </button>);})}
+   </div></div>
+ </div>);}
+
+function DeptView({dept,sel,setSel,vals,setD}){
+ const results=useMemo(()=>computeKpis(dept,vals),[dept,vals]);
+ const overall=rollup(results.map(r=>r.status));
+ return(<div className="space-y-4">
+  <div className="flex flex-wrap items-center gap-2">
+   {DEPTS.map(d=>(<button key={d.code} onClick={()=>setSel(d.code)}
+     style={d.code===sel?{background:C.navy2,color:"#fff",borderColor:C.navy2}:{borderColor:C.line,color:C.ink}}
+     className="text-xs font-semibold rounded-full border bg-white px-3 py-1.5 transition">{d.short}</button>))}
+  </div>
+  <div className="grid lg:grid-cols-5 gap-4">
+   <div className="bg-white rounded-xl border p-4 lg:col-span-2" style={{borderColor:C.line}}>
+    <div className="flex items-center justify-between">
+     <div><Eyebrow>Số liệu nhập</Eyebrow><h2 className="font-bold mt-0.5" style={{color:C.navy}}>{dept.name}</h2></div><Badge s={overall}/></div>
+    <div className="mt-2 divide-y" style={{borderColor:C.line}}>
+     {dept.inputs.map(([id,label,unit])=>(<NumberInput key={id} label={label} unit={unit} value={vals[id]} onChange={v=>setD(dept.code,id,v)}/>))}</div>
+   </div>
+   <div className="lg:col-span-3 space-y-4">
+    <div className="grid sm:grid-cols-2 gap-3">{results.map((r,i)=><KpiCard key={i} r={r}/>)}</div>
+    <div className="bg-white rounded-xl border p-4" style={{borderColor:C.line}}>
+     <Eyebrow>Điểm sức khỏe theo KPI (0–100)</Eyebrow><div className="mt-3"><ScoreBars results={results}/></div></div>
+   </div>
+  </div>
+ </div>);}
+
+function ProjectView({sel,setSel,prjVals,setP}){
+ const meta=PROJECTS.find(p=>p.code===sel); const vals=prjVals[sel];
+ const ext={...vals,...PRJ_DERIVE(vals)};
+ const results=useMemo(()=>PRJ_KPIS.map(k=>{let v=k.calc(ext);if(!isFinite(v))v=0;
+   return{...k,val:v,status:statusOf(v,k.good,k.bad,k.dir),score:scoreOf(v,k.good,k.bad,k.dir)};}),[JSON.stringify(vals)]);
+ const overall=rollup(results.map(r=>r.status));
+ const portfolio=PROJECTS.map(p=>{const e2={...prjVals[p.code],...PRJ_DERIVE(prjVals[p.code])};
+   const ks=PRJ_KPIS.map(k=>statusOf(k.calc(e2),k.good,k.bad,k.dir));
+   return{code:p.code,name:p.name,role:p.role,spi:prjVals[p.code].ev/prjVals[p.code].pv,cpi:prjVals[p.code].ev/prjVals[p.code].ac,prog:prjVals[p.code].td_tt/prjVals[p.code].td_kh*100,overall:rollup(ks)};});
+ return(<div className="space-y-4">
+  <div className="flex flex-wrap items-center gap-2">
+   {PROJECTS.map(p=>(<button key={p.code} onClick={()=>setSel(p.code)}
+     style={p.code===sel?{background:C.teal,color:"#fff",borderColor:C.teal}:{borderColor:C.line,color:C.ink}}
+     className="text-xs font-semibold rounded-full border bg-white px-3 py-1.5 transition">{p.name}</button>))}
+  </div>
+  <div className="grid lg:grid-cols-5 gap-4">
+   <div className="bg-white rounded-xl border p-4 lg:col-span-2" style={{borderColor:C.line}}>
+    <div className="flex items-center justify-between">
+     <div><Eyebrow>{meta.role}</Eyebrow><h2 className="font-bold mt-0.5" style={{color:C.navy}}>{meta.name}</h2></div><Badge s={overall}/></div>
+    <div className="mt-2 space-y-3">
+     {PRJ_INPUTS.map(([gid,gname,fields])=>(
+      <div key={gid}><div className="text-[11px] font-bold tracking-wide uppercase mb-0.5" style={{color:C.teal}}>{gname}</div>
+       <div className="divide-y" style={{borderColor:C.line}}>
+        {fields.map(([id,label,unit])=>(<NumberInput key={id} label={label} unit={unit} value={vals[id]} onChange={v=>setP(sel,id,v)}/>))}</div></div>))}
+    </div></div>
+   <div className="lg:col-span-3 space-y-4">
+    <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
+     {[["SV (EV−PV)",ext.sv],["CV (EV−AC)",ext.cv],["EAC",ext.eac],["VAC",ext.vac],["ETC",ext.etc]].map((x,i)=>(
+      <div key={i} className="bg-white rounded-lg border p-2.5 text-center" style={{borderColor:C.line}}>
+       <div className="text-[10px]" style={{color:C.sub}}>{x[0]}</div>
+       <div className="mono text-sm font-bold mt-0.5" style={{color:x[1]<0?STA["ĐỎ"].c:C.ink}}>{fmtN(x[1])}</div>
+       <div className="text-[9px]" style={{color:C.sub}}>tỷ đ</div></div>))}
+    </div>
+    <div className="bg-white rounded-xl border p-4" style={{borderColor:C.line}}>
+     <Eyebrow>Phân tích giá trị thực hiện (EVM)</Eyebrow>
+     <div className="mt-2"><EvmChart pv={vals.pv} ev={vals.ev} ac={vals.ac} eac={ext.eac} bac={vals.bac}/></div></div>
+    <div className="grid sm:grid-cols-2 gap-3">{results.map((r,i)=><KpiCard key={i} r={r}/>)}</div>
+   </div>
+  </div>
+  <div className="bg-white rounded-xl border" style={{borderColor:C.line}}>
+   <div className="px-4 py-3 border-b" style={{borderColor:C.line}}><Eyebrow>Danh mục dự án (Portfolio)</Eyebrow></div>
+   <div className="overflow-x-auto"><table className="w-full text-sm"><thead>
+    <tr style={{color:C.sub}} className="text-[11px] uppercase tracking-wide">
+     <th className="text-left font-semibold px-4 py-2">Dự án</th><th className="text-left font-semibold px-4 py-2">Vai trò</th>
+     <th className="text-right font-semibold px-4 py-2">% tiến độ</th><th className="text-right font-semibold px-4 py-2">SPI</th>
+     <th className="text-right font-semibold px-4 py-2">CPI</th><th className="text-center font-semibold px-4 py-2">Trạng thái</th></tr></thead>
+    <tbody>{portfolio.map(p=>(
+     <tr key={p.code} onClick={()=>setSel(p.code)} className="border-t cursor-pointer hover:bg-slate-50" style={{borderColor:C.line}}>
+      <td className="px-4 py-2.5 font-semibold" style={{color:C.ink}}>{p.name}</td>
+      <td className="px-4 py-2.5 text-[12px]" style={{color:C.sub}}>{p.role}</td>
+      <td className="px-4 py-2.5 text-right mono">{p.prog.toFixed(1)}%</td>
+      <td className="px-4 py-2.5 text-right font-semibold mono" style={{color:p.spi<0.9?STA["ĐỎ"].c:p.spi<1?STA["VÀNG"].c:STA["XANH"].c}}>{p.spi.toFixed(2)}</td>
+      <td className="px-4 py-2.5 text-right font-semibold mono" style={{color:p.cpi<0.95?STA["ĐỎ"].c:p.cpi<1?STA["VÀNG"].c:STA["XANH"].c}}>{p.cpi.toFixed(2)}</td>
+      <td className="px-4 py-2.5 text-center"><Badge s={p.overall} small/></td></tr>))}</tbody></table></div>
+  </div>
+ </div>);}
+
+/* ===== app ===== */
+function HealthChip({label,n,kind}){const t=STA[kind];return(
+ <div className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5" style={{background:"rgba(255,255,255,0.08)"}}>
+  <span style={{background:t.dot}} className="w-2 h-2 rounded-full"></span>
+  <span className="mono text-sm font-bold text-white">{n}</span><span className="text-[11px]" style={{color:"#9fb3d1"}}>{label}</span></div>);}
+function Tab({id,tab,setTab,icon,children}){const a=tab===id;return(
+ <button onClick={()=>setTab(id)} style={{background:a?C.page:"transparent",color:a?C.navy:"#cdd9ec"}}
+   className={"inline-flex items-center gap-2 text-sm font-semibold rounded-t-lg px-4 py-2.5 transition "+(a?"":"hover:bg-white/10")}>{icon}{children}</button>);}
+
+function App(){
+ const [tab,setTab]=useState("overview");
+ const [selDept,setSelDept]=useState("THCO");
+ const [selPrj,setSelPrj]=useState("DA1");
+ const initDept=useMemo(()=>{const o={};DEPTS.forEach(d=>{o[d.code]={};d.inputs.forEach(([id,a,b,def])=>{o[d.code][id]=def;});});return o;},[]);
+ const initPrj=useMemo(()=>{const o={};PROJECTS.forEach(p=>{o[p.code]={...p.vals};});return o;},[]);
+ const [deptVals,setDeptVals]=useState(initDept);
+ const [prjVals,setPrjVals]=useState(initPrj);
+ const setD=(c,id,v)=>setDeptVals(s=>({...s,[c]:{...s[c],[id]:v}}));
+ const setP=(c,id,v)=>setPrjVals(s=>({...s,[c]:{...s[c],[id]:v}}));
+ const resetAll=()=>{setDeptVals(initDept);setPrjVals(initPrj);toast("Đã đặt lại về số liệu mẫu");};
+ const jsonRef=useRef(null), xlsxRef=useRef(null);
+ const [toastMsg,setToastMsg]=useState(null), [toastErr,setToastErr]=useState(false);
+ const toast=(m,err)=>{setToastErr(!!err);setToastMsg(m);clearTimeout(window.__tt);window.__tt=setTimeout(()=>setToastMsg(null),3600);};
+
+ const sanitizeDept=o=>{const out=clone(initDept);DEPTS.forEach(d=>{if(o&&o[d.code])d.inputs.forEach(([id])=>{const v=parseFloat(o[d.code][id]);if(isFinite(v))out[d.code][id]=v;});});return out;};
+ const sanitizePrj=o=>{const out=clone(initPrj);PROJECTS.forEach(p=>{if(o&&o[p.code])Object.keys(out[p.code]).forEach(id=>{const v=parseFloat(o[p.code][id]);if(isFinite(v))out[p.code][id]=v;});});return out;};
+
+ const saveJSON=()=>{const data=JSON.stringify({app:"QTDN-Dashboard",version:1,savedAt:new Date().toISOString(),deptVals,prjVals},null,2);
+   downloadBlob(data,"du-lieu-quan-tri.json","application/json");toast("Đã lưu dữ liệu ra file .json");};
+ const loadJSON=file=>{const rd=new FileReader();rd.onload=ev=>{try{const o=JSON.parse(ev.target.result);
+   setDeptVals(sanitizeDept(o.deptVals));setPrjVals(sanitizePrj(o.prjVals));toast("Đã đọc dữ liệu từ file .json");}
+   catch(e){toast("Lỗi đọc file JSON: "+e.message,true);}};rd.readAsText(file);};
+
+ const exportExcel=()=>{try{
+   const wb=XLSX.utils.book_new();
+   const pb=[["Mã PB","Phòng ban","Mã chỉ tiêu","Chỉ tiêu","ĐVT","Giá trị"]];
+   DEPTS.forEach(d=>d.inputs.forEach(([id,label,unit])=>pb.push([d.code,d.name,id,label,unit,deptVals[d.code][id]])));
+   const wsPb=XLSX.utils.aoa_to_sheet(pb); wsPb["!cols"]=[{wch:10},{wch:26},{wch:14},{wch:30},{wch:8},{wch:12}];
+   XLSX.utils.book_append_sheet(wb,wsPb,"NhapLieu_PhongBan");
+   const da=[["Mã DA","Dự án","Nhóm","Mã chỉ tiêu","Chỉ tiêu","ĐVT","Giá trị"]];
+   PROJECTS.forEach(p=>PRJ_INPUTS.forEach(([gid,gname,fs])=>fs.forEach(([id,label,unit])=>da.push([p.code,p.name,gname,id,label,unit,prjVals[p.code][id]]))));
+   const wsDa=XLSX.utils.aoa_to_sheet(da); wsDa["!cols"]=[{wch:8},{wch:22},{wch:16},{wch:12},{wch:24},{wch:8},{wch:12}];
+   XLSX.utils.book_append_sheet(wb,wsDa,"NhapLieu_DuAn");
+   const kp=[["Phòng ban","KPI","ĐVT","Giá trị","Ngưỡng tốt","Ngưỡng xấu","Trạng thái"]];
+   DEPTS.forEach(d=>computeKpis(d,deptVals[d.code]).forEach(k=>kp.push([d.name,k.label,k.unit,Math.round(k.val*100)/100,k.good,k.bad,k.status])));
+   const wsKp=XLSX.utils.aoa_to_sheet(kp); wsKp["!cols"]=[{wch:24},{wch:30},{wch:8},{wch:12},{wch:11},{wch:11},{wch:10}];
+   XLSX.utils.book_append_sheet(wb,wsKp,"KPI_PhongBan");
+   const dm=[["Dự án","Vai trò","SPI","CPI","VAC %","Trạng thái"]];
+   PROJECTS.forEach(p=>{const e={...prjVals[p.code],...PRJ_DERIVE(prjVals[p.code])};const ks=PRJ_KPIS.map(k=>statusOf(k.calc(e),k.good,k.bad,k.dir));
+     dm.push([p.name,p.role,Math.round(e.ev/e.pv*100)/100,Math.round(e.ev/e.ac*100)/100,Math.round((e.bac-e.eac)/e.bac*1000)/10,rollup(ks)]);});
+   const wsDm=XLSX.utils.aoa_to_sheet(dm); wsDm["!cols"]=[{wch:24},{wch:20},{wch:8},{wch:8},{wch:9},{wch:10}];
+   XLSX.utils.book_append_sheet(wb,wsDm,"DanhMuc_DuAn");
+   XLSX.writeFile(wb,"du-lieu-quan-tri.xlsx");
+   toast("Đã xuất Excel: 2 sheet nhập liệu + 2 sheet báo cáo KPI");
+ }catch(e){toast("Lỗi xuất Excel: "+e.message,true);}};
+
+ const importExcel=file=>{const rd=new FileReader();rd.onload=ev=>{try{
+   const wb=XLSX.read(new Uint8Array(ev.target.result),{type:"array"});
+   let nPB=0,nDA=0; const nd=clone(deptVals), np=clone(prjVals);
+   const sPb=wb.Sheets["NhapLieu_PhongBan"];
+   if(sPb)XLSX.utils.sheet_to_json(sPb).forEach(r=>{const c=r["Mã PB"],id=r["Mã chỉ tiêu"],v=parseFloat(r["Giá trị"]);if(nd[c]&&id in nd[c]&&isFinite(v)){nd[c][id]=v;nPB++;}});
+   const sDa=wb.Sheets["NhapLieu_DuAn"];
+   if(sDa)XLSX.utils.sheet_to_json(sDa).forEach(r=>{const c=r["Mã DA"],id=r["Mã chỉ tiêu"],v=parseFloat(r["Giá trị"]);if(np[c]&&id in np[c]&&isFinite(v)){np[c][id]=v;nDA++;}});
+   if(!sPb&&!sDa){toast("Không thấy sheet 'NhapLieu_PhongBan'/'NhapLieu_DuAn'. Hãy bấm 'Xuất Excel' để lấy file mẫu rồi sửa số.",true);return;}
+   setDeptVals(nd);setPrjVals(np);
+   toast("Đã nhập từ Excel: "+nPB+" trường phòng ban, "+nDA+" trường dự án");
+ }catch(e){toast("Lỗi đọc Excel: "+e.message,true);}};rd.readAsArrayBuffer(file);};
+
+ const agg=useMemo(()=>{let g=0,y=0,r=0;const perDept=DEPTS.map(d=>{const ks=computeKpis(d,deptVals[d.code]);
+   const cD=ks.filter(k=>k.status==="ĐỎ").length,cY=ks.filter(k=>k.status==="VÀNG").length,cG=ks.filter(k=>k.status==="XANH").length;
+   g+=cG;y+=cY;r+=cD;return{code:d.code,name:d.name,short:d.short,cD,cY,cG,total:ks.length,overall:rollup(ks.map(k=>k.status)),score:ks.reduce((a,k)=>a+k.score,0)/ks.length};});
+   return{g,y,r,total:g+y+r,perDept};},[deptVals]);
+ return(<div style={{background:C.page,color:C.ink,minHeight:"100%"}}>
+  <header style={{background:C.navy}} className="text-white no-print">
+   <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4">
+    <div className="flex items-start sm:items-center justify-between gap-4 flex-wrap">
+     <div><div className="text-[11px] tracking-[0.2em] uppercase" style={{color:"#9fb3d1"}}>CÔNG TY CỔ PHẦN ĐẦU TƯ THIÊN ÂN</div>
+      <h1 className="text-lg sm:text-xl font-bold mt-0.5">Bảng điều khiển Quản trị Doanh nghiệp</h1></div>
+     <div className="flex items-center gap-2">
+      <HealthChip label="Đỏ" n={agg.r} kind="ĐỎ"/><HealthChip label="Vàng" n={agg.y} kind="VÀNG"/><HealthChip label="Xanh" n={agg.g} kind="XANH"/></div>
+    </div>
+    <nav className="flex gap-1 mt-4">
+     <Tab id="overview" tab={tab} setTab={setTab} icon={IcGrid}>Tổng quan</Tab>
+     <Tab id="dept" tab={tab} setTab={setTab} icon={IcBuild}>Phòng ban</Tab>
+     <Tab id="project" tab={tab} setTab={setTab} icon={IcFolder}>Dự án (EVM)</Tab></nav>
+   </div></header>
+  <div className="no-print border-b bg-white" style={{borderColor:C.line}}>
+   <div className="max-w-6xl mx-auto px-4 sm:px-6 py-2 flex flex-wrap items-center gap-2">
+    <span className="text-[11px] font-bold uppercase tracking-wide mr-1" style={{color:C.sub}}>Dữ liệu</span>
+    <TBtn onClick={saveJSON} icon={IcSave}>Lưu (.json)</TBtn>
+    <TBtn onClick={()=>jsonRef.current.click()} icon={IcOpen}>Mở (.json)</TBtn>
+    <span className="w-px h-5" style={{background:C.line}}></span>
+    <TBtn onClick={()=>xlsxRef.current.click()} icon={IcXlsx}>Nhập Excel</TBtn>
+    <TBtn onClick={exportExcel} icon={IcXlsx}>Xuất Excel</TBtn>
+    <span className="w-px h-5" style={{background:C.line}}></span>
+    <TBtn onClick={()=>window.print()} icon={IcPdf}>Xuất PDF</TBtn>
+    <div className="flex-1"></div>
+    <TBtn onClick={resetAll} icon={IcReset} danger>Đặt lại</TBtn>
+    <input ref={jsonRef} type="file" accept=".json" className="hidden" onChange={e=>{if(e.target.files[0])loadJSON(e.target.files[0]);e.target.value="";}}/>
+    <input ref={xlsxRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={e=>{if(e.target.files[0])importExcel(e.target.files[0]);e.target.value="";}}/>
+   </div></div>
+  <main className="max-w-6xl mx-auto px-4 sm:px-6 py-6">
+   <div className="print-title avoid-break" style={{marginBottom:16,borderBottom:"2px solid "+C.navy,paddingBottom:8}}>
+    <div style={{fontSize:20,fontWeight:800,color:C.navy}}>Báo cáo Quản trị Điều hành</div>
+    <div style={{fontSize:12,color:C.sub}}>CÔNG TY CỔ PHẦN ĐẦU TƯ THIÊN ÂN · Ngày in: {new Date().toLocaleDateString("vi-VN")} · Sức khỏe: {agg.r} Đỏ / {agg.y} Vàng / {agg.g} Xanh</div>
+   </div>
+   {tab==="overview"&&<Overview agg={agg} go={c=>{setSelDept(c);setTab("dept");}}/>}
+   {tab==="dept"&&<DeptView dept={DEPTS.find(d=>d.code===selDept)} sel={selDept} setSel={setSelDept} vals={deptVals[selDept]} setD={setD}/>}
+   {tab==="project"&&<ProjectView sel={selPrj} setSel={setSelPrj} prjVals={prjVals} setP={setP}/>}
+   <footer className="mt-8 text-[11px]" style={{color:C.sub}}>
+    Số liệu khởi tạo là dữ liệu mẫu minh họa. Chỉnh số ở ô nhập → mọi chỉ số, biểu đồ và cảnh báo tự cập nhật.
+    Ngưỡng đánh giá tham chiếu chuẩn ngành — hiệu chỉnh theo kế hoạch của Công ty.</footer>
+  </main>
+  {toastMsg&&<div className="no-print fixed left-1/2 bottom-5 -translate-x-1/2 z-50 text-sm font-semibold rounded-lg px-4 py-2.5 shadow-lg"
+    style={{background:toastErr?"#7f1d1d":C.navy,color:"#fff",maxWidth:"90vw"}}>{toastMsg}</div>}
+ </div>);}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
